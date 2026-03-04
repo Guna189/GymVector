@@ -5,12 +5,14 @@ import pandas as pd
 from supabase import create_client, Client
 import os
 import requests
+import re
+from langchain_groq import ChatGroq
 
 # -----------------------------
 # Supabase Setup
 # -----------------------------
-SUPABASE_URL = st.secrets["SUPABASE_URL"]
-SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+SUPABASE_URL = "https://jkhiifxrcykqkfwyqbcn.supabase.co"
+SUPABASE_KEY = "sb_publishable_JNCq_i2OBZl-j_H1p96R4Q_sHdhzXUo"
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # -----------------------------
@@ -70,77 +72,115 @@ def get_logs(user_id):
     result = supabase.table("logs").select("*").eq("user_id", user_id).execute()
     return result.data if result.data else []
 
+
 # -----------------------------
 # Calorie Estimation
 # -----------------------------
-import requests
+# Set up your API Key
+# Replace 'your_api_key_here' with your actual Groq API key
+os.environ["GROQ_API_KEY"] = os.getenv("GROQ_API_KEY")
+
+# Initialize the ChatGroq model
+# Common models: 'llama-3.3-70b-versatile', 'mixtral-8x7b-32768', 'gemma2-9b-it'
+llm = ChatGroq(
+    model="llama-3.3-70b-versatile",
+    temperature=0.2,
+    max_tokens=None,
+    timeout=None,
+    max_retries=2,
+)
+
 
 # -----------------------------
-# Calorie Estimation via API
+# Calorie Estimation via LLM
 # -----------------------------
-ML_API_URL = "https://mlvoca.com/api/generate"
-MODEL_NAME = "tinyllama"
 
 def estimate_food_calories(description, weight, height, age, gender):
     """
-    Sends a prompt to the ML API to get exact calories for a food entry.
+    Uses LLM to estimate calories for a food entry.
     Returns an integer number of calories.
     """
-    prompt = (
-        f"Estimate the number of calories for the following food. "
-        f"User info: weight={weight}kg, height={height}cm, age={age}, gender={gender}. "
-        f"Food: {description}. "
-        f"Strictly return only the numeric calorie value, nothing else."
-    )
 
-    payload = {
-        "model": MODEL_NAME,
-        "prompt": prompt
-    }
+    prompt = f"""
+    Estimate the number of calories for the following food.
+
+    User info:
+    - Weight: {weight} kg
+    - Height: {height} cm
+    - Age: {age}
+    - Gender: {gender}
+
+    Food:
+    {description}
+
+    IMPORTANT:
+    Return ONLY the numeric calorie value.
+    Do NOT include text, units, or explanation.
+    """
 
     try:
-        response = requests.post(ML_API_URL, json=payload, timeout=10)
-        response.raise_for_status()
-        text = response.json().get("text", "").strip()
-        # Keep only digits from response
-        calories = int(''.join(filter(str.isdigit, text)))
-        return calories
+        response = llm.invoke(prompt)
+        text = response.content.strip()
+
+        # Extract only digits safely
+        match = re.search(r"\d+", text)
+        if match:
+            return int(match.group())
+        else:
+            return 500  # fallback if no number found
+
     except Exception as e:
-        print("Error fetching food calories:", e)
-        # fallback if API fails
-        return 500
+        print("Error estimating food calories:", e)
+        return 500  # fallback
+
+
+# -----------------------------
+# Workout Calorie Estimation
+# -----------------------------
 
 def estimate_workout_calories(description, weight, height, age, gender):
     """
-    Sends a prompt to the ML API to get exact calories burned for a workout.
+    Uses LLM to estimate calories burned for a workout.
     Returns an integer number of calories.
     """
-    prompt = (
-        f"Estimate the calories burned for the following workout. "
-        f"User info: weight={weight}kg, height={height}cm, age={age}, gender={gender}. "
-        f"Workout: {description}. "
-        f"Strictly return only the numeric calorie value, nothing else."
-    )
 
-    payload = {
-        "model": MODEL_NAME,
-        "prompt": prompt
-    }
+    prompt = f"""
+    Estimate the calories burned for the following workout.
+
+    User info:
+    - Weight: {weight} kg
+    - Height: {height} cm
+    - Age: {age}
+    - Gender: {gender}
+
+    Workout:
+    {description}
+
+    IMPORTANT:
+    Return ONLY the numeric calorie value.
+    Do NOT include text, units, or explanation.
+    """
 
     try:
-        response = requests.post(ML_API_URL, json=payload, timeout=10)
-        response.raise_for_status()
-        text = response.json().get("text", "").strip()
-        calories = int(''.join(filter(str.isdigit, text)))
-        return calories
+        response = llm.invoke(prompt)
+        text = response.content.strip()
+
+        match = re.search(r"\d+", text)
+        if match:
+            return int(match.group())
+        else:
+            return 200  # fallback
+
     except Exception as e:
-        print("Error fetching workout calories:", e)
-        # fallback if API fails
-        return 200
+        print("Error estimating workout calories:", e)
+        return 200  # fallback
 
 # -----------------------------
 # Streamlit Session
 # -----------------------------
+st.set_page_config(
+    page_title="GymVector"
+)
 if "user" not in st.session_state:
     st.session_state.user = None
 
@@ -229,6 +269,11 @@ else:
         entry_date = st.date_input("Select Date", value=datetime.date.today())
         entry_type = st.selectbox("Entry Type", ["Food", "Workout", "Water"])
         description = st.text_input("Description (Food / Workout name)")
+        manual_calories = st.number_input(
+            "Calories (optional - leave 0 to auto calculate)",
+            min_value=0,
+            value=0
+        )
         water_amount = st.number_input("Water Intake (ml) — only for Water type", min_value=0, value=0)
         submit = st.form_submit_button("Add Entry")
 
@@ -239,12 +284,12 @@ else:
                 st.error("Please enter water amount.")
             else:
                 if entry_type == "Food":
-                    calories = estimate_food_calories(description, weight, height, age, gender)
+                    calories = manual_calories if manual_calories>0 else estimate_food_calories(description, weight, height, age, gender)
                     insert_log(user_id, "food", description, calories=calories, log_date=entry_date)
                     st.success(f"Food logged: {calories} calories")
 
                 elif entry_type == "Workout":
-                    burned = estimate_workout_calories(description, weight, height, age, gender)
+                    burned = manual_calories if manual_calories>0 else estimate_workout_calories(description, weight, height, age, gender)
                     insert_log(user_id, "workout", description, calories=burned, log_date=entry_date)
                     st.success(f"Workout logged: {burned} calories burned")
                 elif entry_type == "Water":
