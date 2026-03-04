@@ -4,6 +4,7 @@ import datetime
 import pandas as pd
 from supabase import create_client, Client
 import os
+import requests
 
 # -----------------------------
 # Supabase Setup
@@ -27,7 +28,7 @@ def calculate_age(dob):
 # -----------------------------
 # Supabase DB Operations
 # -----------------------------
-def register_user(username, password, weight, height, dob):
+def register_user(username, password, weight, height, dob, gender):
     existing = supabase.table("users").select("*").eq("username", username).execute()
     if existing.data:
         return False
@@ -36,7 +37,8 @@ def register_user(username, password, weight, height, dob):
         "password": hash_password(password),
         "weight": weight,
         "height": height,
-        "dob": dob
+        "dob": dob,
+        "gender": gender
     }).execute()
     return True
 
@@ -71,20 +73,70 @@ def get_logs(user_id):
 # -----------------------------
 # Calorie Estimation
 # -----------------------------
-def estimate_food_calories(text):
-    return 500  # placeholder
+import requests
 
-def estimate_workout_calories(text, weight):
-    text = text.lower()
-    base = weight * 0.1
-    if "run" in text:
-        return int(base * 8)
-    elif "walk" in text:
-        return int(base * 4)
-    elif "gym" in text:
-        return int(base * 6)
-    else:
-        return int(base * 5)
+# -----------------------------
+# Calorie Estimation via API
+# -----------------------------
+ML_API_URL = "https://mlvoca.com/api/generate"
+MODEL_NAME = "tinyllama"
+
+def estimate_food_calories(description, weight, height, age, gender):
+    """
+    Sends a prompt to the ML API to get exact calories for a food entry.
+    Returns an integer number of calories.
+    """
+    prompt = (
+        f"Estimate the number of calories for the following food. "
+        f"User info: weight={weight}kg, height={height}cm, age={age}, gender={gender}. "
+        f"Food: {description}. "
+        f"Strictly return only the numeric calorie value, nothing else."
+    )
+
+    payload = {
+        "model": MODEL_NAME,
+        "prompt": prompt
+    }
+
+    try:
+        response = requests.post(ML_API_URL, json=payload, timeout=10)
+        response.raise_for_status()
+        text = response.json().get("text", "").strip()
+        # Keep only digits from response
+        calories = int(''.join(filter(str.isdigit, text)))
+        return calories
+    except Exception as e:
+        print("Error fetching food calories:", e)
+        # fallback if API fails
+        return 500
+
+def estimate_workout_calories(description, weight, height, age, gender):
+    """
+    Sends a prompt to the ML API to get exact calories burned for a workout.
+    Returns an integer number of calories.
+    """
+    prompt = (
+        f"Estimate the calories burned for the following workout. "
+        f"User info: weight={weight}kg, height={height}cm, age={age}, gender={gender}. "
+        f"Workout: {description}. "
+        f"Strictly return only the numeric calorie value, nothing else."
+    )
+
+    payload = {
+        "model": MODEL_NAME,
+        "prompt": prompt
+    }
+
+    try:
+        response = requests.post(ML_API_URL, json=payload, timeout=10)
+        response.raise_for_status()
+        text = response.json().get("text", "").strip()
+        calories = int(''.join(filter(str.isdigit, text)))
+        return calories
+    except Exception as e:
+        print("Error fetching workout calories:", e)
+        # fallback if API fails
+        return 200
 
 # -----------------------------
 # Streamlit Session
@@ -105,6 +157,7 @@ if not st.session_state.user:
         password = st.text_input("Password", type="password")
         weight = st.number_input("Weight (kg)", min_value=1.0)
         height = st.number_input("Height (cm)", min_value=1.0)
+        gender = st.selectbox("Gender", ["Male", "Female", "Other"])
         dob = st.date_input(
             "Date of Birth",
             min_value=datetime.date(1960, 1, 1),
@@ -113,7 +166,7 @@ if not st.session_state.user:
 
         if st.button("Register"):
             success = register_user(
-                username, password, weight, height, dob.strftime("%Y-%m-%d")
+                username, password, weight, height, dob.strftime("%Y-%m-%d"), gender
             )
             if success:
                 st.success("Account created! Please login.")
@@ -142,6 +195,7 @@ else:
     weight = user["weight"]
     height = user["height"]
     dob = user["dob"]
+    gender = user.get("gender", "Other")
 
     age = calculate_age(dob)
 
@@ -185,11 +239,12 @@ else:
                 st.error("Please enter water amount.")
             else:
                 if entry_type == "Food":
-                    calories = estimate_food_calories(description)
+                    calories = estimate_food_calories(description, weight, height, age, gender)
                     insert_log(user_id, "food", description, calories=calories, log_date=entry_date)
                     st.success(f"Food logged: {calories} calories")
+
                 elif entry_type == "Workout":
-                    burned = estimate_workout_calories(description, weight)
+                    burned = estimate_workout_calories(description, weight, height, age, gender)
                     insert_log(user_id, "workout", description, calories=burned, log_date=entry_date)
                     st.success(f"Workout logged: {burned} calories burned")
                 elif entry_type == "Water":
@@ -244,4 +299,3 @@ else:
         st.bar_chart(water_chart)
     else:
         st.info("No data logged yet.")
-
