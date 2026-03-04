@@ -179,7 +179,8 @@ def estimate_workout_calories(description, weight, height, age, gender):
 # Streamlit Session
 # -----------------------------
 st.set_page_config(
-    page_title="GymVector"
+    page_title="GymVector",
+    page_icon="GymVectorIcon.png",
 )
 if "user" not in st.session_state:
     st.session_state.user = None
@@ -344,3 +345,4 @@ else:
         st.bar_chart(water_chart)
     else:
         st.info("No data logged yet.")
+
