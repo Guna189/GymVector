@@ -179,8 +179,7 @@ def estimate_workout_calories(description, weight, height, age, gender):
 # Streamlit Session
 # -----------------------------
 st.set_page_config(
-    page_title="GymVector",
-    page_icon="GymVectorIcon.png",
+    page_title="GymVector"
 )
 if "user" not in st.session_state:
     st.session_state.user = None
@@ -298,13 +297,58 @@ else:
                     st.success(f"Water logged: {water_amount} ml")
                 st.rerun()
 
+
+    # -----------------------------
+    # Today's Summary
+    # -----------------------------
+    logs = get_logs(user_id)
+    df = pd.DataFrame(logs)
+
+    if df.empty:
+        st.info("No data logged yet.")
+    else:
+        df["created_at"] = pd.to_datetime(df["created_at"])
+        df["date"] = df["created_at"].dt.date
+
+        # Today's Summary
+        today = datetime.date.today()
+        today_df = df[df["date"] == today]
+
+    st.header("📅 Today's Summary")
+
+    today = datetime.date.today()
+
+    today_df = df[df["date"] == today]
+
+    today_food = today_df[today_df["type"] == "food"]["calories"].sum()
+    today_workout = today_df[today_df["type"] == "workout"]["calories"].sum()
+    today_water = today_df[today_df["type"] == "water"]["water"].sum()
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.metric("Calories Consumed Today", today_food)
+
+    with col2:
+        st.metric("Calories Burned Today", today_workout)
+
+    with col3:
+        st.metric("Water Intake Today (ml)", today_water)
+
+    st.subheader("📝 Today's Logs")
+
+    if not today_df.empty:
+        st.dataframe(
+            today_df[["date", "type", "description", "calories", "water"]],
+            use_container_width=True
+        )
+    else:
+        st.info("No logs for today.")
     # -----------------------------
     # Analysis Section
     # -----------------------------
     st.header("📊 Analysis Dashboard")
 
-    logs = get_logs(user_id)
-    df = pd.DataFrame(logs)
     if not df.empty:
         df["created_at"] = pd.to_datetime(df["created_at"])
         df["date"] = df["created_at"].dt.date
@@ -346,3 +390,36 @@ else:
     else:
         st.info("No data logged yet.")
 
+    # -----------------------------
+    # View Specific Day
+    # -----------------------------
+    st.header("📅 View Specific Day")
+
+    selected_date = st.date_input("Select a date", value=datetime.date.today())
+
+    day_df = df[df["date"] == selected_date]
+
+    day_food = day_df[day_df["type"] == "food"]["calories"].sum()
+    day_workout = day_df[day_df["type"] == "workout"]["calories"].sum()
+    day_water = day_df[day_df["type"] == "water"]["water"].sum()
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.metric("Calories Consumed", day_food)
+
+    with col2:
+        st.metric("Calories Burned", day_workout)
+
+    with col3:
+        st.metric("Water Intake (ml)", day_water)
+
+    st.subheader("📝 Logs for Selected Day")
+
+    if not day_df.empty:
+        st.dataframe(
+            day_df[["date", "type", "description", "calories", "water"]],
+            use_container_width=True
+        )
+    else:
+        st.info("No logs for this date.")
