@@ -109,7 +109,7 @@ def estimate_food_calories(description, weight, height, age, gender):
     - Height: {height} cm
     - Age: {age}
     - Gender: {gender}
-
+    - Food Style : Hyderabad, Telangana, India 
     Food:
     {description}
 
@@ -423,3 +423,4 @@ else:
         )
     else:
         st.info("No logs for this date.")
+
