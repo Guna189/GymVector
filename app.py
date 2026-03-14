@@ -13,6 +13,7 @@ from langchain_groq import ChatGroq
 # -----------------------------
 SUPABASE_URL = "https://jkhiifxrcykqkfwyqbcn.supabase.co"
 SUPABASE_KEY = "sb_publishable_JNCq_i2OBZl-j_H1p96R4Q_sHdhzXUo"
+
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # -----------------------------
@@ -54,12 +55,19 @@ def login_user(username, password):
 def update_profile(user_id, weight, height):
     supabase.table("users").update({"weight": weight, "height": height}).eq("id", user_id).execute()
 
+    # NEW: weight history log
+    supabase.table("weight_logs").insert({
+        "user_id": user_id,
+        "weight": weight
+    }).execute()
+
 def insert_log(user_id, log_type, description, calories=0, water=0, log_date=None):
     if log_date is None:
         log_date = datetime.datetime.now()
     else:
         log_date = datetime.datetime.combine(log_date, datetime.datetime.now().time())
-    supabase.table("logs").insert({
+
+    result = supabase.table("logs").insert({
         "user_id": user_id,
         "type": log_type,
         "description": description,
@@ -68,119 +76,129 @@ def insert_log(user_id, log_type, description, calories=0, water=0, log_date=Non
         "created_at": log_date.isoformat()
     }).execute()
 
+    return result.data[0]["id"] if result.data else None
+
+
 def get_logs(user_id):
     result = supabase.table("logs").select("*").eq("user_id", user_id).execute()
     return result.data if result.data else []
 
-
 # -----------------------------
-# Calorie Estimation
+# LLM Setup
 # -----------------------------
-# Set up your API Key
-# Replace 'your_api_key_here' with your actual Groq API key
 os.environ["GROQ_API_KEY"] = os.getenv("GROQ_API_KEY")
 
-# Initialize the ChatGroq model
-# Common models: 'llama-3.3-70b-versatile', 'mixtral-8x7b-32768', 'gemma2-9b-it'
 llm = ChatGroq(
     model="llama-3.3-70b-versatile",
     temperature=0.2,
-    max_tokens=None,
-    timeout=None,
-    max_retries=2,
 )
-
 
 # -----------------------------
 # Calorie Estimation via LLM
 # -----------------------------
-
 def estimate_food_calories(description, weight, height, age, gender):
-    """
-    Uses LLM to estimate calories for a food entry.
-    Returns an integer number of calories.
-    """
 
     prompt = f"""
-    Estimate the number of calories for the following food.
+Estimate the number of calories for the following food.
 
-    User info:
-    - Weight: {weight} kg
-    - Height: {height} cm
-    - Age: {age}
-    - Gender: {gender}
-    - Food Style : Hyderabad, Telangana, India 
-    Food:
-    {description}
+User info:
+- Weight: {weight} kg
+- Height: {height} cm
+- Age: {age}
+- Gender: {gender}
+- Food Style : Hyderabad, Telangana, India 
 
-    IMPORTANT:
-    Return ONLY the numeric calorie value.
-    Do NOT include text, units, or explanation.
-    """
+Food:
+{description}
+
+IMPORTANT:
+Return ONLY the numeric calorie value.
+"""
 
     try:
         response = llm.invoke(prompt)
-        text = response.content.strip()
+        match = re.search(r"\d+", response.content)
+        return int(match.group()) if match else 500
+    except:
+        return 500
 
-        # Extract only digits safely
-        match = re.search(r"\d+", text)
-        if match:
-            return int(match.group())
-        else:
-            return 500  # fallback if no number found
-
-    except Exception as e:
-        print("Error estimating food calories:", e)
-        return 500  # fallback
-
-
-# -----------------------------
-# Workout Calorie Estimation
-# -----------------------------
 
 def estimate_workout_calories(description, weight, height, age, gender):
-    """
-    Uses LLM to estimate calories burned for a workout.
-    Returns an integer number of calories.
-    """
 
     prompt = f"""
-    Estimate the calories burned for the following workout.
+Estimate calories burned.
 
-    User info:
-    - Weight: {weight} kg
-    - Height: {height} cm
-    - Age: {age}
-    - Gender: {gender}
+User info:
+- Weight: {weight}
+- Height: {height}
+- Age: {age}
+- Gender: {gender}
 
-    Workout:
-    {description}
+Workout:
+{description}
 
-    IMPORTANT:
-    Return ONLY the numeric calorie value.
-    Do NOT include text, units, or explanation.
-    """
+Return ONLY number.
+"""
 
     try:
         response = llm.invoke(prompt)
-        text = response.content.strip()
+        match = re.search(r"\d+", response.content)
+        return int(match.group()) if match else 200
+    except:
+        return 200
 
-        match = re.search(r"\d+", text)
-        if match:
-            return int(match.group())
-        else:
-            return 200  # fallback
 
-    except Exception as e:
-        print("Error estimating workout calories:", e)
-        return 200  # fallback
+# -----------------------------
+# NEW: Nutrition Estimation
+# -----------------------------
+def estimate_food_nutrition(description):
+
+    prompt = f"""
+Estimate nutrition values for this food.
+
+Food:
+{description}
+
+Return ONLY numbers like:
+
+protein: 10
+carbs: 20
+fats: 5
+fiber: 3
+sugar: 4
+sodium: 200
+calcium: 50
+"""
+
+    try:
+        response = llm.invoke(prompt)
+        text = response.content.lower()
+
+        def get_val(name):
+            m = re.search(fr"{name}\s*:\s*(\d+)", text)
+            return int(m.group(1)) if m else 0
+
+        return {
+            "protein": get_val("protein"),
+            "carbs": get_val("carbs"),
+            "fats": get_val("fats"),
+            "fiber": get_val("fiber"),
+            "sugar": get_val("sugar"),
+            "sodium": get_val("sodium"),
+            "calcium": get_val("calcium")
+        }
+
+    except:
+        return {
+            "protein":0,"carbs":0,"fats":0,
+            "fiber":0,"sugar":0,"sodium":0,"calcium":0
+        }
 
 # -----------------------------
 # Streamlit Session
 # -----------------------------
-st.set_page_config(
-    page_title="GymVector"
-)
+st.set_page_config(page_title="GymVector")
+
 if "user" not in st.session_state:
     st.session_state.user = None
 
@@ -198,11 +216,7 @@ if not st.session_state.user:
         weight = st.number_input("Weight (kg)", min_value=1.0)
         height = st.number_input("Height (cm)", min_value=1.0)
         gender = st.selectbox("Gender", ["Male", "Female", "Other"])
-        dob = st.date_input(
-            "Date of Birth",
-            min_value=datetime.date(1960, 1, 1),
-            max_value=datetime.date.today()
-        )
+        dob = st.date_input("Date of Birth")
 
         if st.button("Register"):
             success = register_user(
@@ -229,6 +243,7 @@ if not st.session_state.user:
 # Dashboard
 # -----------------------------
 else:
+
     user = st.session_state.user
     user_id = user["id"]
     username = user["username"]
@@ -247,10 +262,11 @@ else:
         st.session_state.user = None
         st.rerun()
 
-    # -----------------------------
-    # Update Profile
-    # -----------------------------
+# -----------------------------
+# Update Profile
+# -----------------------------
     st.subheader("Update Weight & Height")
+
     new_weight = st.number_input("New Weight", value=float(weight))
     new_height = st.number_input("New Height", value=float(height))
 
@@ -259,65 +275,74 @@ else:
         st.success("Profile Updated")
         st.rerun()
 
-    # -----------------------------
-    # Logging Section
-    # -----------------------------
+# -----------------------------
+# Add Entry
+# -----------------------------
     st.subheader("➕ Add Entry")
 
     with st.form("entry_form"):
 
         entry_date = st.date_input("Select Date", value=datetime.date.today())
         entry_type = st.selectbox("Entry Type", ["Food", "Workout", "Water"])
-        description = st.text_input("Description (Food / Workout name)")
-        manual_calories = st.number_input(
-            "Calories (optional - leave 0 to auto calculate)",
-            min_value=0,
-            value=0
-        )
-        water_amount = st.number_input("Water Intake (ml) — only for Water type", min_value=0, value=0)
+        description = st.text_input("Description (Food / Workout)")
+        manual_calories = st.number_input("Calories (optional)", min_value=0, value=0)
+        water_amount = st.number_input("Water Intake (ml)", min_value=0, value=0)
+
         submit = st.form_submit_button("Add Entry")
 
         if submit:
-            if entry_type in ["Food", "Workout"] and description.strip() == "":
-                st.error("Please enter description.")
-            elif entry_type == "Water" and water_amount <= 0:
-                st.error("Please enter water amount.")
-            else:
-                if entry_type == "Food":
-                    calories = manual_calories if manual_calories>0 else estimate_food_calories(description, weight, height, age, gender)
-                    insert_log(user_id, "food", description, calories=calories, log_date=entry_date)
-                    st.success(f"Food logged: {calories} calories")
 
-                elif entry_type == "Workout":
-                    burned = manual_calories if manual_calories>0 else estimate_workout_calories(description, weight, height, age, gender)
-                    insert_log(user_id, "workout", description, calories=burned, log_date=entry_date)
-                    st.success(f"Workout logged: {burned} calories burned")
-                elif entry_type == "Water":
-                    insert_log(user_id, "water", "Water Intake", water=water_amount, log_date=entry_date)
-                    st.success(f"Water logged: {water_amount} ml")
-                st.rerun()
+            if entry_type == "Food":
 
+                calories = manual_calories if manual_calories>0 else estimate_food_calories(description, weight, height, age, gender)
 
-    # -----------------------------
-    # Today's Summary
-    # -----------------------------
+                log_id = insert_log(user_id, "food", description, calories=calories, log_date=entry_date)
+
+                # NEW: nutrition logging
+                nutrition = estimate_food_nutrition(description)
+
+                supabase.table("nutrition_logs").insert({
+                    "log_id": log_id,
+                    **nutrition
+                }).execute()
+
+                st.success(f"Food logged: {calories} calories")
+
+            elif entry_type == "Workout":
+
+                burned = manual_calories if manual_calories>0 else estimate_workout_calories(description, weight, height, age, gender)
+
+                insert_log(user_id, "workout", description, calories=burned, log_date=entry_date)
+
+                st.success(f"Workout logged: {burned} calories burned")
+
+            elif entry_type == "Water":
+
+                insert_log(user_id, "water", "Water Intake", water=water_amount, log_date=entry_date)
+
+                st.success(f"Water logged: {water_amount} ml")
+
+            st.rerun()
+
+# -----------------------------
+# Load Logs
+# -----------------------------
     logs = get_logs(user_id)
     df = pd.DataFrame(logs)
 
     if df.empty:
         st.info("No data logged yet.")
-    else:
-        df["created_at"] = pd.to_datetime(df["created_at"])
-        df["date"] = df["created_at"].dt.date
+        st.stop()
 
-        # Today's Summary
-        today = datetime.date.today()
-        today_df = df[df["date"] == today]
+    df["created_at"] = pd.to_datetime(df["created_at"])
+    df["date"] = df["created_at"].dt.date
 
+# -----------------------------
+# Today's Summary
+# -----------------------------
     st.header("📅 Today's Summary")
 
     today = datetime.date.today()
-
     today_df = df[df["date"] == today]
 
     today_food = today_df[today_df["type"] == "food"]["calories"].sum()
@@ -326,73 +351,65 @@ else:
 
     col1, col2, col3 = st.columns(3)
 
-    with col1:
-        st.metric("Calories Consumed Today", today_food)
+    col1.metric("Calories Consumed Today", today_food)
+    col2.metric("Calories Burned Today", today_workout)
+    col3.metric("Water Intake Today (ml)", today_water)
 
-    with col2:
-        st.metric("Calories Burned Today", today_workout)
+# -----------------------------
+# NEW: Nutrition Summary
+# -----------------------------
+    nutrition_rows = supabase.table("nutrition_logs").select("*").execute().data
+    nut_df = pd.DataFrame(nutrition_rows)
 
-    with col3:
-        st.metric("Water Intake Today (ml)", today_water)
+    if not nut_df.empty:
 
-    st.subheader("📝 Today's Logs")
+        totals = nut_df.sum()
 
-    if not today_df.empty:
-        st.dataframe(
-            today_df[["date", "type", "description", "calories", "water"]],
-            use_container_width=True
-        )
-    else:
-        st.info("No logs for today.")
-    # -----------------------------
-    # Analysis Section
-    # -----------------------------
+        st.subheader("🥗 Nutrition Summary")
+
+        c1,c2,c3,c4 = st.columns(4)
+        c1.metric("Protein", totals["protein"])
+        c2.metric("Carbs", totals["carbs"])
+        c3.metric("Fats", totals["fats"])
+        c4.metric("Fiber", totals["fiber"])
+
+        c5,c6,c7 = st.columns(3)
+        c5.metric("Sugar", totals["sugar"])
+        c6.metric("Sodium", totals["sodium"])
+        c7.metric("Calcium", totals["calcium"])
+
+# -----------------------------
+# Analysis Dashboard
+# -----------------------------
     st.header("📊 Analysis Dashboard")
 
-    if not df.empty:
-        df["created_at"] = pd.to_datetime(df["created_at"])
-        df["date"] = df["created_at"].dt.date
+    calories_grouped = df.groupby(["date","type"])["calories"].sum().unstack().fillna(0)
 
-        range_option = st.radio("Select Range", ["Last 7 Days", "Last 30 Days", "Last 1 Year"], horizontal=True)
-        today = datetime.date.today()
-        if range_option == "Last 7 Days":
-            start_date = today - pd.Timedelta(days=7)
-        elif range_option == "Last 30 Days":
-            start_date = today - pd.Timedelta(days=30)
-        else:
-            start_date = today - pd.Timedelta(days=365)
-        filtered = df[df["date"] >= start_date]
+    st.subheader("🔥 Calories Trend")
+    st.line_chart(calories_grouped)
 
-        # KPI Section
-        food_total = filtered[filtered["type"] == "food"]["calories"].sum()
-        workout_total = filtered[filtered["type"] == "workout"]["calories"].sum()
-        water_total = filtered[filtered["type"] == "water"]["water"].sum()
-        net = food_total - workout_total
+    water_chart = df[df["type"]=="water"].groupby("date")["water"].sum()
 
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Calories Consumed", food_total)
-            st.metric("Net Calories", net)
-        with col2:
-            st.metric("Calories Burned", workout_total)
-            st.metric("Water Intake (ml)", water_total)
+    st.subheader("💧 Water Trend")
+    st.bar_chart(water_chart)
 
-        # Calories Trend
-        st.subheader("🔥 Calories Trend")
-        calories_chart = filtered[filtered["type"].isin(["food", "workout"])]
-        calories_grouped = calories_chart.groupby(["date", "type"])["calories"].sum().unstack().fillna(0)
-        st.line_chart(calories_grouped)
+# -----------------------------
+# NEW: Weight Progress
+# -----------------------------
+    weight_logs = supabase.table("weight_logs").select("*").eq("user_id", user_id).execute().data
+    wdf = pd.DataFrame(weight_logs)
 
-        # Water Intake Chart
-        st.subheader("💧 Water Intake")
-        water_chart = filtered[filtered["type"] == "water"].groupby("date")["water"].sum()
-        st.bar_chart(water_chart)
-    else:
-        st.info("No data logged yet.")
+    if not wdf.empty:
 
-    # -----------------------------
-    # View Specific Day
-    # -----------------------------
+        wdf["created_at"] = pd.to_datetime(wdf["created_at"])
+
+        st.subheader("⚖️ Weight Progress")
+
+        st.line_chart(wdf.set_index("created_at")["weight"])
+
+# -----------------------------
+# View Specific Day
+# -----------------------------
     st.header("📅 View Specific Day")
 
     selected_date = st.date_input("Select a date", value=datetime.date.today())
@@ -403,24 +420,87 @@ else:
     day_workout = day_df[day_df["type"] == "workout"]["calories"].sum()
     day_water = day_df[day_df["type"] == "water"]["water"].sum()
 
-    col1, col2, col3 = st.columns(3)
+    c1,c2,c3 = st.columns(3)
 
-    with col1:
-        st.metric("Calories Consumed", day_food)
-
-    with col2:
-        st.metric("Calories Burned", day_workout)
-
-    with col3:
-        st.metric("Water Intake (ml)", day_water)
-
-    st.subheader("📝 Logs for Selected Day")
+    c1.metric("Calories Consumed", day_food)
+    c2.metric("Calories Burned", day_workout)
+    c3.metric("Water Intake (ml)", day_water)
 
     if not day_df.empty:
-        st.dataframe(
-            day_df[["date", "type", "description", "calories", "water"]],
-            use_container_width=True
-        )
+        st.dataframe(day_df)
     else:
         st.info("No logs for this date.")
 
+    
+    # -----------------------------
+    # Nutrition For Selected Day
+    # -----------------------------
+    st.subheader("🥗 Nutrition For Selected Day")
+
+    nutrition_rows = supabase.table("nutrition_logs")\
+        .select("*, logs(created_at,user_id)")\
+        .execute().data
+
+    nut_df = pd.DataFrame(nutrition_rows)
+
+    if not nut_df.empty:
+
+        # extract log date
+        nut_df["created_at"] = nut_df["logs"].apply(lambda x: x["created_at"])
+        nut_df["user_id"] = nut_df["logs"].apply(lambda x: x["user_id"])
+
+        nut_df["created_at"] = pd.to_datetime(nut_df["created_at"])
+        nut_df["date"] = nut_df["created_at"].dt.date
+
+        # filter selected day + user
+        day_nutrition = nut_df[
+            (nut_df["date"] == selected_date) &
+            (nut_df["user_id"] == user_id)
+        ]
+
+        if day_nutrition.empty:
+
+            totals = {
+                "protein":0,
+                "carbs":0,
+                "fats":0,
+                "fiber":0,
+                "sugar":0,
+                "sodium":0,
+                "calcium":0
+            }
+
+        else:
+
+            totals = day_nutrition[
+                ["protein","carbs","fats","fiber","sugar","sodium","calcium"]
+            ].sum()
+
+    else:
+
+        totals = {
+            "protein":0,
+            "carbs":0,
+            "fats":0,
+            "fiber":0,
+            "sugar":0,
+            "sodium":0,
+            "calcium":0
+        }
+
+    # Display Metrics
+    col1,col2,col3,col4 = st.columns(4)
+
+    col1.metric("Protein (g)", totals["protein"])
+    col2.metric("Carbs (g)", totals["carbs"])
+    col3.metric("Fats (g)", totals["fats"])
+    col4.metric("Fiber (g)", totals["fiber"])
+
+    col5,col6,col7 = st.columns(3)
+
+    col5.metric("Sugar (g)", totals["sugar"])
+    col6.metric("Sodium (mg)", totals["sodium"])
+    col7.metric("Calcium (mg)", totals["calcium"])
+
+    # Chart
+    st.bar_chart(pd.Series(totals))
