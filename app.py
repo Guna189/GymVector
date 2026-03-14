@@ -11,8 +11,8 @@ from langchain_groq import ChatGroq
 # -----------------------------
 # Supabase Setup
 # -----------------------------
-SUPABASE_URL = "https://jkhiifxrcykqkfwyqbcn.supabase.co"
-SUPABASE_KEY = "sb_publishable_JNCq_i2OBZl-j_H1p96R4Q_sHdhzXUo"
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
