@@ -355,58 +355,168 @@ else:
     col2.metric("Calories Burned Today", today_workout)
     col3.metric("Water Intake Today (ml)", today_water)
 
-# -----------------------------
-# NEW: Nutrition Summary
-# -----------------------------
-    nutrition_rows = supabase.table("nutrition_logs").select("*").execute().data
+    # -----------------------------
+    # NEW: Nutrition Summary (Today)
+    # -----------------------------
+    nutrition_rows = supabase.table("nutrition_logs")\
+        .select("*, logs(created_at,user_id)")\
+        .execute().data
+
     nut_df = pd.DataFrame(nutrition_rows)
 
     if not nut_df.empty:
 
-        totals = nut_df.sum()
+        # extract log fields
+        nut_df["created_at"] = nut_df["logs"].apply(lambda x: x["created_at"])
+        nut_df["user_id"] = nut_df["logs"].apply(lambda x: x["user_id"])
 
-        st.subheader("🥗 Nutrition Summary")
+        nut_df["created_at"] = pd.to_datetime(nut_df["created_at"])
+        nut_df["date"] = nut_df["created_at"].dt.date
+
+        # filter today + user
+        today_nutrition = nut_df[
+            (nut_df["date"] == today) &
+            (nut_df["user_id"] == user_id)
+        ]
+
+        if today_nutrition.empty:
+
+            totals = {
+                "protein":0,
+                "carbs":0,
+                "fats":0,
+                "fiber":0,
+                "sugar":0,
+                "sodium":0,
+                "calcium":0
+            }
+
+        else:
+
+            totals = today_nutrition[
+                ["protein","carbs","fats","fiber","sugar","sodium","calcium"]
+            ].sum()
+
+        st.subheader("🥗 Today's Nutrition Summary")
 
         c1,c2,c3,c4 = st.columns(4)
-        c1.metric("Protein", totals["protein"])
-        c2.metric("Carbs", totals["carbs"])
-        c3.metric("Fats", totals["fats"])
-        c4.metric("Fiber", totals["fiber"])
+        c1.metric("Protein (g)", totals["protein"])
+        c2.metric("Carbs (g)", totals["carbs"])
+        c3.metric("Fats (g)", totals["fats"])
+        c4.metric("Fiber (g)", totals["fiber"])
 
         c5,c6,c7 = st.columns(3)
-        c5.metric("Sugar", totals["sugar"])
-        c6.metric("Sodium", totals["sodium"])
-        c7.metric("Calcium", totals["calcium"])
+        c5.metric("Sugar (g)", totals["sugar"])
+        c6.metric("Sodium (mg)", totals["sodium"])
+        c7.metric("Calcium (mg)", totals["calcium"])
 
-# -----------------------------
-# Analysis Dashboard
-# -----------------------------
+    # -----------------------------
+    # Analysis Dashboard
+    # -----------------------------
     st.header("📊 Analysis Dashboard")
 
-    calories_grouped = df.groupby(["date","type"])["calories"].sum().unstack().fillna(0)
+    range_option = st.radio(
+        "Select Range",
+        ["Last 7 Days", "Last 30 Days", "Last 1 Year"],
+        horizontal=True
+    )
 
-    st.subheader("🔥 Calories Trend")
-    st.line_chart(calories_grouped)
+    today = datetime.date.today()
 
-    water_chart = df[df["type"]=="water"].groupby("date")["water"].sum()
+    if range_option == "Last 7 Days":
+        start_date = today - pd.Timedelta(days=7)
 
-    st.subheader("💧 Water Trend")
+    elif range_option == "Last 30 Days":
+        start_date = today - pd.Timedelta(days=30)
+
+    else:
+        start_date = today - pd.Timedelta(days=365)
+
+    filtered = df[df["date"] >= start_date]
+
+    # -----------------------------
+    # KPI Metrics
+    # -----------------------------
+    food_total = filtered[filtered["type"] == "food"]["calories"].sum()
+    workout_total = filtered[filtered["type"] == "workout"]["calories"].sum()
+    water_total = filtered[filtered["type"] == "water"]["water"].sum()
+
+    net_calories = food_total - workout_total
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.metric("Calories Consumed", food_total)
+        st.metric("Net Calories", net_calories)
+
+    with col2:
+        st.metric("Calories Burned", workout_total)
+        st.metric("Water Intake (ml)", water_total)
+
+    # -----------------------------
+    # Calories Trend
+    # -----------------------------
+    st.subheader("🔥 Calories & Water Trend")
+
+    # Calories (food + workout)
+    calories_chart = filtered[filtered["type"].isin(["food", "workout"])]
+
+    calories_grouped = (
+        calories_chart
+        .groupby(["date", "type"])["calories"]
+        .sum()
+        .unstack()
+        .fillna(0)
+    )
+
+    # Water intake
+    water_chart = (
+        filtered[filtered["type"] == "water"]
+        .groupby("date")["water"]
+        .sum()
+    )
+
+    # Merge into one dataframe
+    trend_df = calories_grouped.copy()
+    trend_df["water"] = water_chart
+
+    trend_df = trend_df.fillna(0)
+
+    st.line_chart(trend_df)
+
+    # -----------------------------
+    # Water Intake Trend
+    # -----------------------------
+    st.subheader("💧 Water Intake")
+
     st.bar_chart(water_chart)
 
-# -----------------------------
-# NEW: Weight Progress
-# -----------------------------
-    weight_logs = supabase.table("weight_logs").select("*").eq("user_id", user_id).execute().data
+    # -----------------------------
+    # Weight Progress
+    # -----------------------------
+    weight_logs = supabase.table("weight_logs")\
+        .select("*")\
+        .eq("user_id", user_id)\
+        .execute().data
+
     wdf = pd.DataFrame(weight_logs)
 
     if not wdf.empty:
 
         wdf["created_at"] = pd.to_datetime(wdf["created_at"])
+        wdf["date"] = wdf["created_at"].dt.date
+
+        # filter same range
+        wdf = wdf[wdf["date"] >= start_date]
 
         st.subheader("⚖️ Weight Progress")
 
-        st.line_chart(wdf.set_index("created_at")["weight"])
+        weight_chart = wdf.set_index("date")["weight"]
 
+        st.line_chart(weight_chart)
+
+    else:
+        st.info("No weight history yet. Update your weight to track progress.")
 # -----------------------------
 # View Specific Day
 # -----------------------------
