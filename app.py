@@ -556,10 +556,9 @@ else:
     
             with col2:
                 if st.button("❌", key=f"del_{row['id']}"):
-                    if st.confirm("Are you sure you want to delete this log?"):
-                        delete_log(row["id"])
-                        st.success("Log deleted")
-                        st.rerun()
+                    delete_log(row["id"])
+                    st.success("Log deleted")
+                    st.rerun()
     else:
         st.info("No logs for this date.")
 
