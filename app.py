@@ -545,20 +545,30 @@ else:
     c3.metric("Water Intake (ml)", day_water)
 
     if not day_df.empty:
+        st.markdown("### 🧾 Logs")
         for index, row in day_df.iterrows():
-            col1, col2 = st.columns([6,1])
-    
-            with col1:
-                st.write(
-                    f"{row['type'].upper()} | {row['description']} | "
-                    f"Calories: {row['calories']} | Water: {row['water']}"
-                )
-    
-            with col2:
-                if st.button("❌", key=f"del_{row['id']}"):
-                    delete_log(row["id"])
-                    st.success("Log deleted")
-                    st.rerun()
+            with st.container():
+                col1, col2, col3 = st.columns([3,2,1])
+                # ICON based on type
+                if row["type"] == "food":
+                    icon = "🍽️"
+                elif row["type"] == "workout":
+                    icon = "🏋️"
+                else:
+                    icon = "💧"
+                with col1:
+                    st.markdown(f"**{icon} {row['description']}**")
+                    st.caption(f"Type: {row['type'].capitalize()}")
+                with col2:
+                    if row["type"] != "water":
+                        st.metric("Calories", row["calories"])
+                    else:
+                        st.metric("Water (ml)", row["water"])
+                with col3:
+                    if st.button("🗑️", key=f"del_{row['id']}"):
+                        delete_log(row["id"])
+                        st.rerun()
+                st.divider()
     else:
         st.info("No logs for this date.")
 
