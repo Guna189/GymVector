@@ -83,6 +83,14 @@ def get_logs(user_id):
     result = supabase.table("logs").select("*").eq("user_id", user_id).execute()
     return result.data if result.data else []
 
+def delete_log(log_id):
+    # delete nutrition first (to avoid FK issues)
+    supabase.table("nutrition_logs").delete().eq("log_id", log_id).execute()
+
+    # delete main log
+    supabase.table("logs").delete().eq("id", log_id).execute()
+
+
 # -----------------------------
 # LLM Setup
 # -----------------------------
@@ -537,7 +545,21 @@ else:
     c3.metric("Water Intake (ml)", day_water)
 
     if not day_df.empty:
-        st.dataframe(day_df)
+        for index, row in day_df.iterrows():
+            col1, col2 = st.columns([6,1])
+    
+            with col1:
+                st.write(
+                    f"{row['type'].upper()} | {row['description']} | "
+                    f"Calories: {row['calories']} | Water: {row['water']}"
+                )
+    
+            with col2:
+                if st.button("❌", key=f"del_{row['id']}"):
+                    if st.confirm("Are you sure you want to delete this log?"):
+                        delete_log(row["id"])
+                        st.success("Log deleted")
+                        st.rerun()
     else:
         st.info("No logs for this date.")
 
